@@ -21,6 +21,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,15 +62,28 @@ public class FormHttpMessageWriter extends LoggingCodecSupport
 		implements HttpMessageWriter<MultiValueMap<String, String>> {
 
 	/**
+	 * Hint to send form data with x-www-form-urlencoded as specified by <a href="https://url.spec.whatwg.org/#application/x-www-form-urlencoded">URL Standard</a>,
+	 * which sends payload using UTF-8 encoding without mentioning it via the "charset" parameter.
+	 */
+	public static final String STRICT_CHARSET_COMPLIANCE_HINT = FormHttpMessageWriter.class.getName() + ".STRICT_CHARSET_COMPLIANCE";
+
+	/**
+	 * To preserve backwards compatibility to recent Spring versions, set Content-Type header and charset.
+	 */
+	private static final boolean DEFAULT_STRICT_CHARSET_COMPLIANCE = false;
+
+	/**
 	 * The default charset used by the writer.
 	 */
 	public static final Charset DEFAULT_CHARSET = StandardCharsets.UTF_8;
 
+	private static final MediaType DEFAULT_STRICT_FORM_DATA_MEDIA_TYPE = MediaType.APPLICATION_FORM_URLENCODED;
+
 	private static final MediaType DEFAULT_FORM_DATA_MEDIA_TYPE =
-			new MediaType(MediaType.APPLICATION_FORM_URLENCODED, DEFAULT_CHARSET);
+			new MediaType(DEFAULT_STRICT_FORM_DATA_MEDIA_TYPE, DEFAULT_CHARSET);
 
 	private static final List<MediaType> MEDIA_TYPES =
-			Collections.singletonList(MediaType.APPLICATION_FORM_URLENCODED);
+			Collections.singletonList(DEFAULT_STRICT_FORM_DATA_MEDIA_TYPE);
 
 	private static final ResolvableType MULTIVALUE_TYPE =
 			ResolvableType.forClassWithGenerics(MultiValueMap.class, String.class, String.class);
@@ -107,7 +121,7 @@ public class FormHttpMessageWriter extends LoggingCodecSupport
 		if (!MultiValueMap.class.isAssignableFrom(elementType.toClass())) {
 			return false;
 		}
-		if (MediaType.APPLICATION_FORM_URLENCODED.isCompatibleWith(mediaType)) {
+		if (DEFAULT_STRICT_FORM_DATA_MEDIA_TYPE.isCompatibleWith(mediaType)) {
 			// Optimistically, any MultiValueMap with or without generics
 			return true;
 		}
@@ -124,9 +138,10 @@ public class FormHttpMessageWriter extends LoggingCodecSupport
 			Map<String, Object> hints) {
 
 		mediaType = getMediaType(mediaType);
-		message.getHeaders().setContentType(mediaType);
 
 		Charset charset = mediaType.getCharset() != null ? mediaType.getCharset() : getDefaultCharset();
+
+		message.getHeaders().setContentType(getContentType(mediaType, charset, hints));
 
 		return Mono.from(inputStream).flatMap(form -> {
 			logFormData(form, hints);
@@ -136,6 +151,31 @@ public class FormHttpMessageWriter extends LoggingCodecSupport
 			message.getHeaders().setContentLength(byteBuffer.remaining());
 			return message.writeWith(Mono.just(buffer));
 		});
+	}
+
+	private MediaType getContentType(MediaType mediaType, Charset charset, Map<String, Object> hints) {
+		if (isStrictCharsetCompliance(hints)) {
+			if (mediaType == DEFAULT_FORM_DATA_MEDIA_TYPE) {
+				// avoid more expensive checks if the default has been used
+				return DEFAULT_STRICT_FORM_DATA_MEDIA_TYPE;
+			}
+			else if (DEFAULT_STRICT_FORM_DATA_MEDIA_TYPE.equalsTypeAndSubtype(mediaType) && DEFAULT_CHARSET.equals(charset)) {
+				if (mediaType.getCharset() == null || (mediaType.getCharset() != null && mediaType.getParameters().size() == 1)) {
+					return DEFAULT_STRICT_FORM_DATA_MEDIA_TYPE;
+				}
+				else {
+					Map<String, String> parameters = new HashMap<>(mediaType.getParameters());
+					parameters.remove("charset");
+					return new MediaType(mediaType, parameters);
+				}
+			}
+			else {
+				return mediaType;
+			}
+		}
+		else {
+			return mediaType;
+		}
 	}
 
 	protected MediaType getMediaType(@Nullable MediaType mediaType) {
@@ -171,6 +211,10 @@ public class FormHttpMessageWriter extends LoggingCodecSupport
 					}
 				}));
 		return builder.toString();
+	}
+
+	private static boolean isStrictCharsetCompliance(@Nullable Map<String, Object> hints) {
+		return (hints != null && (boolean) hints.getOrDefault(STRICT_CHARSET_COMPLIANCE_HINT, DEFAULT_STRICT_CHARSET_COMPLIANCE));
 	}
 
 }

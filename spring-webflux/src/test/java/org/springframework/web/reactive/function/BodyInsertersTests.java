@@ -28,6 +28,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import com.fasterxml.jackson.annotation.JsonView;
 import io.reactivex.rxjava3.core.Single;
@@ -323,14 +325,24 @@ public class BodyInsertersTests {
 
 	@Test
 	public void fromFormDataMap() {
+		doFromFormDataMapTest(BodyInserters::fromFormData, new MediaType(MediaType.APPLICATION_FORM_URLENCODED, UTF_8));
+	}
+
+	@Test
+	public void fromFormDataMap_strictCharsetCompliance() {
+		doFromFormDataMapTest(body -> BodyInserters.fromFormData(body, true), MediaType.APPLICATION_FORM_URLENCODED);
+	}
+
+	private void doFromFormDataMapTest(Function<MultiValueMap<String, String>, BodyInserters.FormInserter<String>> insertion, MediaType expectedContentType) {
 		MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
 		body.set("name 1", "value 1");
 		body.add("name 2", "value 2+1");
 		body.add("name 2", "value 2+2");
 		body.add("name 3", null);
+		body.add("name 4", "ä"); // verify usage of UTF-8 encoding
 
 		BodyInserter<MultiValueMap<String, String>, ClientHttpRequest>
-				inserter = BodyInserters.fromFormData(body);
+				inserter = insertion.apply(body);
 
 		MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.GET, URI.create("https://example.com"));
 		Mono<Void> result = inserter.insert(request, this.context);
@@ -341,20 +353,32 @@ public class BodyInsertersTests {
 					byte[] resultBytes = new byte[dataBuffer.readableByteCount()];
 					dataBuffer.read(resultBytes);
 					DataBufferUtils.release(dataBuffer);
-					assertThat(resultBytes).isEqualTo("name+1=value+1&name+2=value+2%2B1&name+2=value+2%2B2&name+3".getBytes(StandardCharsets.UTF_8));
+					assertThat(resultBytes).isEqualTo("name+1=value+1&name+2=value+2%2B1&name+2=value+2%2B2&name+3&name+4=%C3%A4".getBytes(StandardCharsets.UTF_8));
 				})
 				.expectComplete()
 				.verify();
+
+		assertThat(request.getHeaders().getContentType()).isEqualTo(expectedContentType);
 
 	}
 
 	@Test
 	public void fromFormDataWith() {
+		doFromFormDataWith(BodyInserters::fromFormData, new MediaType(MediaType.APPLICATION_FORM_URLENCODED, UTF_8));
+	}
+
+	@Test
+	public void fromFormDataWith_strictCharsetCompliance() {
+		doFromFormDataWith((key, value) -> BodyInserters.fromFormData(key, value, true), new MediaType(MediaType.APPLICATION_FORM_URLENCODED));
+	}
+
+	private void doFromFormDataWith(BiFunction<String, String, BodyInserters.FormInserter<String>> initialInsertion, MediaType expectedContentType) {
 		BodyInserter<MultiValueMap<String, String>, ClientHttpRequest>
-				inserter = BodyInserters.fromFormData("name 1", "value 1")
+				inserter = initialInsertion.apply("name 1", "value 1")
 				.with("name 2", "value 2+1")
 				.with("name 2", "value 2+2")
-				.with("name 3", null);
+				.with("name 3", null)
+				.with("name 4", "ä");
 
 		MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.GET, URI.create("https://example.com"));
 		Mono<Void> result = inserter.insert(request, this.context);
@@ -365,10 +389,12 @@ public class BodyInsertersTests {
 					byte[] resultBytes = new byte[dataBuffer.readableByteCount()];
 					dataBuffer.read(resultBytes);
 					DataBufferUtils.release(dataBuffer);
-					assertThat(resultBytes).isEqualTo("name+1=value+1&name+2=value+2%2B1&name+2=value+2%2B2&name+3".getBytes(StandardCharsets.UTF_8));
+					assertThat(resultBytes).isEqualTo("name+1=value+1&name+2=value+2%2B1&name+2=value+2%2B2&name+3&name+4=%C3%A4".getBytes(StandardCharsets.UTF_8));
 				})
 				.expectComplete()
 				.verify();
+
+		assertThat(request.getHeaders().getContentType()).isEqualTo(expectedContentType);
 
 	}
 

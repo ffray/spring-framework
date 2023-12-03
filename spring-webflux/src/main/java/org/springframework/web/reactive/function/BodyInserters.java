@@ -18,6 +18,7 @@ package org.springframework.web.reactive.function;
 
 import java.io.OutputStream;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
@@ -28,6 +29,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.ReactiveAdapter;
 import org.springframework.core.ReactiveAdapterRegistry;
 import org.springframework.core.ResolvableType;
+import org.springframework.core.codec.Hints;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
@@ -37,6 +39,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ReactiveHttpOutputMessage;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.http.client.reactive.ClientHttpRequest;
+import org.springframework.http.codec.FormHttpMessageWriter;
 import org.springframework.http.codec.HttpMessageWriter;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.http.server.reactive.ServerHttpResponse;
@@ -267,6 +270,10 @@ public abstract class BodyInserters {
 		return new DefaultFormInserter().with(formData);
 	}
 
+	public static FormInserter<String> fromFormData(MultiValueMap<String, String> formData, boolean strictCharsetCompliance) {
+		return new DefaultFormInserter().withStrictCharsetCompliance(strictCharsetCompliance).with(formData);
+	}
+
 	/**
 	 * Return a {@link FormInserter} to write the given key-value pair as
 	 * URL-encoded form data. The returned inserter allows for additional
@@ -279,6 +286,12 @@ public abstract class BodyInserters {
 		Assert.notNull(name, "'name' must not be null");
 		Assert.notNull(value, "'value' must not be null");
 		return new DefaultFormInserter().with(name, value);
+	}
+
+	public static FormInserter<String> fromFormData(String name, String value, boolean strictCharsetCompliance) {
+		Assert.notNull(name, "'name' must not be null");
+		Assert.notNull(value, "'value' must not be null");
+		return new DefaultFormInserter().withStrictCharsetCompliance(strictCharsetCompliance).with(name, value);
 	}
 
 	/**
@@ -531,6 +544,7 @@ public abstract class BodyInserters {
 	private static class DefaultFormInserter implements FormInserter<String> {
 
 		private final MultiValueMap<String, String> data = new LinkedMultiValueMap<>();
+		private boolean strictCharsetCompliance;
 
 		@Override
 		public FormInserter<String> with(String key, @Nullable String value) {
@@ -544,13 +558,20 @@ public abstract class BodyInserters {
 			return this;
 		}
 
+		public DefaultFormInserter withStrictCharsetCompliance(boolean strictCharsetCompliance) {
+			this.strictCharsetCompliance = strictCharsetCompliance;
+			return this;
+		}
+
 		@Override
 		public Mono<Void> insert(ClientHttpRequest outputMessage, Context context) {
 			HttpMessageWriter<MultiValueMap<String, String>> messageWriter =
 					findWriter(context, FORM_DATA_TYPE, MediaType.APPLICATION_FORM_URLENCODED);
+
+			Map<String, Object> hints = Hints.merge(context.hints(), FormHttpMessageWriter.STRICT_CHARSET_COMPLIANCE_HINT, this.strictCharsetCompliance);
 			return messageWriter.write(Mono.just(this.data), FORM_DATA_TYPE,
 					MediaType.APPLICATION_FORM_URLENCODED,
-					outputMessage, context.hints());
+					outputMessage, hints);
 		}
 	}
 
